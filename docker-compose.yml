@@ -1,0 +1,52 @@
+version: '3.3'
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./php/nginx/conf.d/demo.wordpress.local.conf:/etc/nginx/conf.d/demo.wordpress.local.conf
+    depends_on:
+      - mysql
+      - wordpress
+    links:
+      - wordpress
+
+  mysql:
+    image: mysql:latest
+    environment:
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_ROOT_PASSWORD=root
+
+  wordpress:
+    build:
+      context: ./
+      dockerfile: ./php/Dockerfile
+    environment:
+      - VIRTUAL_HOST=demo.wordpress.local
+    depends_on:
+      - mysql
+    links:
+      - mysql
+    volumes:
+      - ./php/fpm/conf.d/xhprof_sampling.php:/usr/local/etc/php/conf.d/xhprof_sampling.php
+      - ./php/fpm/conf.d/xhprof_sampling.ini:/usr/local/etc/php/conf.d/xhprof_sampling.ini
+
+  juno_kv_server:
+    image: bloodjazman/juno_kv_server
+    entrypoint: /juno-test/bin/kv_server
+    ports:
+      - 6060:6060
+      - 8379:8379
+
+  go-torch:
+    image: uber/go-torch
+    depends_on:
+      - juno_kv_server
+    links:
+      - juno_kv_server
+    volumes:
+      - /tmp/:/tmp/
+    entrypoint: '/go/bin/go-torch -u http://juno_kv_server:6060 -f /tmp/go-torch-flamegraph.svg'
+
