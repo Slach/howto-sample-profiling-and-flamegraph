@@ -5,12 +5,14 @@ services:
     ports:
       - "80:80"
     volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
       - ./php/nginx/conf.d/demo.wordpress.local.conf:/etc/nginx/conf.d/demo.wordpress.local.conf
+      - ./rbspy/nginx/conf.d/demo.publify.local.conf:/etc/nginx/conf.d/demo.publify.local.conf
     depends_on:
       - mysql
       - wordpress
+      - rbspy
     links:
+      - rbspy
       - wordpress
 
   mysql:
@@ -32,6 +34,7 @@ services:
     volumes:
       - ./php/fpm/conf.d/xhprof_sampling.php:/usr/local/etc/php/conf.d/xhprof_sampling.php
       - ./php/fpm/conf.d/xhprof_sampling.ini:/usr/local/etc/php/conf.d/xhprof_sampling.ini
+      - /tmp/:/tmp/
 
   juno_kv_server:
     image: bloodjazman/juno_kv_server
@@ -50,3 +53,13 @@ services:
       - /tmp/:/tmp/
     entrypoint: '/go/bin/go-torch -u http://juno_kv_server:6060 -f /tmp/go-torch-flamegraph.svg'
 
+  rbspy:
+    build:
+      context: ./
+      dockerfile: ./rbspy/Dockerfile
+    ports:
+      - 3000:3000
+    volumes:
+      - /tmp/:/tmp/
+    cap_add:
+      - SYS_PTRACE
