@@ -14,8 +14,7 @@ echo $NGINX_CONTAINER_ADDR demo.wordpress.local >> /etc/hosts
 ab -n 1000 -c 50 http://demo.wordpress.local/wp-admin/setup-config.php 2>&1 > /tmp/ab_results_php.log &
 
 #build flamegraph SVG from xhprof sampling data
-docker-compose exec wordpress sh -c "php -f /opt/xhprof-flamegraphs/xhprof-sample-to-flamegraph-stacks /tmp/xhprof | /opt/FlameGraph/flamegraph.pl > /tmp/xhprof-flamegraph.svg"
-
+docker-compose exec wordpress sh -c "php -f /opt/xhprof-flamegraphs/xhprof-sample-to-flamegraph-stacks /tmp | /opt/FlameGraph/flamegraph.pl > /tmp/xhprof-flamegraph.svg"
 ls -la /tmp/*.svg
 ```
 
@@ -44,7 +43,6 @@ NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.I
 echo $NGINX_CONTAINER_ADDR demo.publify.local >> /etc/hosts
 # run ab in background, for imitate workload
 ab -n 100000 -c 50 http://demo.publify.local/setup &> /tmp/ab_results_rbspy.log &
-
 
 RBSPY_CONTAINER_ID=`docker ps -a | grep rbspy | cut -d " " -f 1`
 RBSPY_PID=$(docker-compose exec rbspy sh -c "ss -nltp | grep ':3000' | sort | head -n 1 | cut -d '=' -f 2 | cut -d "," -f 1 | tr -d '\n' | tr -d '\r'")

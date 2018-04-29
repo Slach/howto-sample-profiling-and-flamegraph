@@ -27,7 +27,7 @@ Vagrant.configure(2) do |config|
         export DEBIAN_FRONTEND=noninteractive
         sysctl net.ipv6.conf.all.forwarding=1
         apt-get update
-        apt-get install -y apt-transport-https software-properties-common apache2-utils
+        apt-get install -y apt-transport-https software-properties-common apache2-utils git
 
         # gophers
         # apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 136221EE520DDFAF0A905689B9316A7BC7917B12
@@ -42,6 +42,8 @@ Vagrant.configure(2) do |config|
         apt-get install -y htop ethtool mc iotop
         apt-get install -y python-pip
         pip install -U docker-compose requests
+        mkdir -p /opt/flamescope/
+        git clone https://github.com/Netflix/flamescope /opt/flamescope/
         # apt-get install -y golang-1.8
         # ln -nvsf /usr/lib/go-1.8/bin/go /bin/go
         # ln -nvsf /usr/lib/go-1.8/bin/gofmt /bin/gofmt

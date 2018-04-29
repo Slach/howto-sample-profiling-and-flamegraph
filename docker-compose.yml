@@ -57,9 +57,12 @@ services:
     build:
       context: ./
       dockerfile: ./rbspy/Dockerfile
-    ports:
-      - 3000:3000
     volumes:
       - /tmp/:/tmp/
     cap_add:
       - SYS_PTRACE
+
+#  flamescope:
+#    build:
+#      context: /opt/flamescope
+#      dockerfile: /opt/flamescope/Dockerfile
