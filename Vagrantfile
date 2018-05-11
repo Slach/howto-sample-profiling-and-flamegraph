@@ -18,7 +18,12 @@ Vagrant.configure(2) do |config|
     end
     config.vm.define :profiling do |profiling|
         profiling.vm.host_name = "local-sample-profiling"
-        profiling.hostmanager.aliases = ["local.sample-profiling","demo.wordpress.local","demo.publify.local"]
+        profiling.hostmanager.aliases = [
+            "demo.wordpress.local",
+            "demo.publify.local",
+            "demo.flamescope.local",
+            "demo.hlebushek.local",
+        ]
         profiling.vm.network "private_network", ip: "172.16.61.2"
     end
 
@@ -29,10 +34,6 @@ Vagrant.configure(2) do |config|
         apt-get update
         apt-get install -y apt-transport-https software-properties-common apache2-utils git
 
-        # gophers
-        # apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 136221EE520DDFAF0A905689B9316A7BC7917B12
-        # add-apt-repository ppa:gophers/archive
-
         # docker
         apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 8D81803C0EBFCD88
         add-apt-repository "deb https://download.docker.com/linux/ubuntu xenial edge"
@@ -42,11 +43,7 @@ Vagrant.configure(2) do |config|
         apt-get install -y htop ethtool mc iotop
         apt-get install -y python-pip
         pip install -U docker-compose requests
-        mkdir -p /opt/flamescope/
-        git clone https://github.com/Netflix/flamescope /opt/flamescope/
-        # apt-get install -y golang-1.8
-        # ln -nvsf /usr/lib/go-1.8/bin/go /bin/go
-        # ln -nvsf /usr/lib/go-1.8/bin/gofmt /bin/gofmt
+
         echo "local sampling pro PROVISIONING DONE, use folloding scenario for developing"
         echo "#  vagrant ssh profiling"
         echo "for docker build run following command"

@@ -52,3 +52,25 @@ docker-compose exec rbspy sh -c "rbspy record --pid=${RBSPY_PID} --raw-file=/tmp
 ls -la /tmp/*.svg
 
 ```
+
+## FLAMESCOPE
+
+```bash
+docker-compose up -d
+
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+echo $NGINX_CONTAINER_ADDR demo.hlebushek.local >> /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.flamescope.local >> /etc/hosts
+
+# run ab in background, for imitate workload
+ab -n 200000 -c 50 http://demo.hlebushek.local/ &> /tmp/ab_results_java.log &
+
+DT=$(date +'%Y-%m-%d_%H%M')
+JAVA_PID=`docker-compose exec java ps -ef | grep java | tr -s ' ' | cut -d ' ' -f 2`
+docker-compose exec java bash -c "rm -rfv /tmp/perf-$JAVA_PID.map && PERF_RECORD_SECONDS=15 /opt/perf-map-agent/bin/perf-java-record-stack $JAVA_PID -a && ls -la /tmp/" 
+docker-compose exec java bash -c "perf script --header -i /tmp/perf-$JAVA_PID.data > /tmp/stacks.myproductionapp.$DT"
+
+# open http://demo.flamescope.local in browser
+
+```

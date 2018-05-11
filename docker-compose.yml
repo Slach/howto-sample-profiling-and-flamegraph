@@ -7,13 +7,18 @@ services:
     volumes:
       - ./php/nginx/conf.d/demo.wordpress.local.conf:/etc/nginx/conf.d/demo.wordpress.local.conf
       - ./rbspy/nginx/conf.d/demo.publify.local.conf:/etc/nginx/conf.d/demo.publify.local.conf
+      - ./java/nginx/conf.d/demo.hlebushek.local.conf:/etc/nginx/conf.d/demo.hlebushek.local.conf
+      - ./java/nginx/conf.d/demo.flamescope.local.conf:/etc/nginx/conf.d/demo.flamescope.local.conf
     depends_on:
-      - mysql
       - wordpress
       - rbspy
+      - java
+      - flamescope
     links:
       - rbspy
       - wordpress
+      - java
+      - flamescope
 
   mysql:
     image: mysql:latest
@@ -62,7 +67,18 @@ services:
     cap_add:
       - SYS_PTRACE
 
-#  flamescope:
-#    build:
-#      context: /opt/flamescope
-#      dockerfile: /opt/flamescope/Dockerfile
+  flamescope:
+    build:
+      context: /opt/flamescope
+      dockerfile: /opt/flamescope/Dockerfile
+    volumes:
+      - /tmp/:/stacks/
+
+  java:
+    build:
+      context: ./
+      dockerfile: ./java/Dockerfile
+    command: sh -c "cd /opt/hlebushek && MAVEN_OPTS='-XX:+PreserveFramePointer -Xmx512m -Xms10m' mvn jetty:run"
+    volumes:
+      - /tmp/:/tmp/
+    privileged: true
