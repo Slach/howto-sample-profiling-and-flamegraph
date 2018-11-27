@@ -52,6 +52,10 @@ docker-compose exec rbspy sh -c "rbspy record --pid=${RBSPY_PID} --raw-file=/tmp
 ls -la /tmp/*.svg
 
 ```
+## .Net Core (TODO)
+
+- http://blogs.microsoft.co.il/sasha/2017/02/27/profiling-a-net-core-application-on-linux/
+- http://dotsandbrackets.com/net-core-memory-linux-ru/
 
 ## FLAMESCOPE
 

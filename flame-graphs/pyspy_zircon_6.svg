@@ -1,0 +1,1382 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="630" onload="init(evt)" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs >
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	.func_g:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	var details, searchbtn, matchedtxt, svg;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+	}
+
+	// mouse-over for info
+	function s(node) {		// show
+		info = g_to_text(node);
+		details.nodeValue = "Function: " + info;
+	}
+	function c() {			// clear
+		details.nodeValue = ' ';
+	}
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	})
+
+	// functions
+	function find_child(parent, name, attr) {
+		var children = parent.childNodes;
+		for (var i=0; i<children.length;i++) {
+			if (children[i].tagName == name)
+				return (attr != undefined) ? children[i].attributes[attr].value : children[i];
+		}
+		return;
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_"+attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_"+attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_"+attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes["width"].value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2*12*0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x=txt.length-2; x>0; x--) {
+			if (t.getSubStringLength(0, x+2) <= w) {
+				t.textContent = txt.substring(0,x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = (parseFloat(e.attributes["x"].value) - x - 10) * ratio + 10;
+				if(e.tagName == "text") e.attributes["x"].value = find_child(e.parentNode, "rect", "x") + 3;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseFloat(e.attributes["width"].value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_child(c[i], x-10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = 10;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseInt(svg.width.baseVal.value) - (10*2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr["width"].value);
+		var xmin = parseFloat(attr["x"].value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr["y"].value);
+		var ratio = (svg.width.baseVal.value - 2*10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "1.0";
+
+		var el = document.getElementsByTagName("g");
+		for(var i=0;i<el.length;i++){
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a["x"].value);
+			var ew = parseFloat(a["width"].value);
+			// Is it an ancestor
+			if (1 == 0) {
+				var upstack = parseFloat(a["y"].value) > ymin;
+			} else {
+				var upstack = parseFloat(a["y"].value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.style["opacity"] = "0.5";
+					zoom_parent(e);
+					e.onclick = function(e){unzoom(); zoom(this);};
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.style["display"] = "none";
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.style["display"] = "none";
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					e.onclick = function(e){zoom(this);};
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "0.0";
+
+		var el = document.getElementsByTagName("g");
+		for(i=0;i<el.length;i++) {
+			el[i].style["display"] = "block";
+			el[i].style["opacity"] = "1";
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}
+
+	// search
+	function reset_search() {
+		var el = document.getElementsByTagName("rect");
+		for (var i=0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)", "");
+			if (term != null) {
+				search(term)
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			searchbtn.style["opacity"] = "0.1";
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.style["opacity"] = "0.0";
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		var re = new RegExp(term);
+		var el = document.getElementsByTagName("g");
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			if (e.attributes["class"].value != "func_g")
+				continue;
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (rect == null) {
+				// the rect might be wrapped in an anchor
+				// if nameattr href is being used
+				if (rect = find_child(e, "a")) {
+				    rect = find_child(r, "rect");
+				}
+			}
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes["width"].value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes["x"].value);
+				orig_save(rect, "fill");
+				rect.attributes["fill"].value =
+				    "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.style["opacity"] = "1.0";
+		searchbtn.firstChild.nodeValue = "Reset Search"
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.style["opacity"] = "1.0";
+		pct = 100 * count / maxwidth;
+		if (pct == 100)
+			pct = "100"
+		else
+			pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+	function searchover(e) {
+		searchbtn.style["opacity"] = "1.0";
+	}
+	function searchout(e) {
+		if (searching) {
+			searchbtn.style["opacity"] = "1.0";
+		} else {
+			searchbtn.style["opacity"] = "0.1";
+		}
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="630.0" fill="url(#background)"  />
+<text text-anchor="middle" x="600.00" y="24" font-size="17" font-family="Verdana" fill="rgb(0,0,0)"  >Icicle Graph</text>
+<text text-anchor="" x="10.00" y="613" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="details" > </text>
+<text text-anchor="" x="10.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>
+<text text-anchor="" x="1090.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>
+<text text-anchor="" x="1090.00" y="613" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="matched" > </text>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>assign_command (E:\softeq\kite\core\run_values\command_information.py:138) (1 samples, 0.25%)</title><rect x="1154.6" y="420" width="3.0" height="15.0" fill="rgb(222,216,32)" rx="2" ry="2" />
+<text text-anchor="" x="1157.60" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:533) (1 samples, 0.25%)</title><rect x="1154.6" y="468" width="3.0" height="15.0" fill="rgb(252,85,25)" rx="2" ry="2" />
+<text text-anchor="" x="1157.60" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1172) (346 samples, 86.50%)</title><rect x="21.8" y="404" width="1020.7" height="15.0" fill="rgb(236,165,1)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1172)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="1083.8" y="500" width="3.0" height="15.0" fill="rgb(237,73,45)" rx="2" ry="2" />
+<text text-anchor="" x="1086.80" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:257) (1 samples, 0.25%)</title><rect x="1157.6" y="500" width="2.9" height="15.0" fill="rgb(232,68,15)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (235 samples, 58.75%)</title><rect x="95.6" y="484" width="693.2" height="15.0" fill="rgb(213,54,29)" rx="2" ry="2" />
+<text text-anchor="" x="98.55" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\core\events\plugin_management.py:232) (1 samples, 0.25%)</title><rect x="1095.6" y="436" width="2.9" height="15.0" fill="rgb(228,155,10)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:533) (1 samples, 0.25%)</title><rect x="1125.1" y="468" width="2.9" height="15.0" fill="rgb(242,96,41)" rx="2" ry="2" />
+<text text-anchor="" x="1128.10" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1075.0" y="516" width="2.9" height="15.0" fill="rgb(213,65,15)" rx="2" ry="2" />
+<text text-anchor="" x="1077.95" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1063.2" y="484" width="2.9" height="15.0" fill="rgb(227,92,3)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>ensure_success_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:177) (1 samples, 0.25%)</title><rect x="1142.8" y="532" width="3.0" height="15.0" fill="rgb(212,179,52)" rx="2" ry="2" />
+<text text-anchor="" x="1145.80" y="542.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (2 samples, 0.50%)</title><rect x="1057.2" y="420" width="6.0" height="15.0" fill="rgb(233,33,43)" rx="2" ry="2" />
+<text text-anchor="" x="1060.25" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:202) (18 samples, 4.50%)</title><rect x="841.9" y="468" width="53.1" height="15.0" fill="rgb(249,26,9)" rx="2" ry="2" />
+<text text-anchor="" x="844.90" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_c..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Buffer.py:74) (4 samples, 1.00%)</title><rect x="48.4" y="452" width="11.8" height="15.0" fill="rgb(233,74,38)" rx="2" ry="2" />
+<text text-anchor="" x="51.35" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>is_success (E:\softeq\kite\libs\sata\response.py:275) (1 samples, 0.25%)</title><rect x="1089.7" y="500" width="3.0" height="15.0" fill="rgb(205,174,13)" rx="2" ry="2" />
+<text text-anchor="" x="1092.70" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:873) (1 samples, 0.25%)</title><rect x="1063.2" y="420" width="2.9" height="15.0" fill="rgb(207,108,41)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (C:\Python27.64bit\lib\collections.py:69) (1 samples, 0.25%)</title><rect x="1101.5" y="500" width="3.0" height="15.0" fill="rgb(233,211,12)" rx="2" ry="2" />
+<text text-anchor="" x="1104.50" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (3 samples, 0.75%)</title><rect x="1045.5" y="420" width="8.8" height="15.0" fill="rgb(209,73,41)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:112) (1 samples, 0.25%)</title><rect x="1157.6" y="452" width="2.9" height="15.0" fill="rgb(208,138,45)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (11 samples, 2.75%)</title><rect x="856.7" y="484" width="32.4" height="15.0" fill="rgb(241,193,39)" rx="2" ry="2" />
+<text text-anchor="" x="859.65" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:283) (1 samples, 0.25%)</title><rect x="1054.3" y="452" width="2.9" height="15.0" fill="rgb(224,214,16)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:472) (1 samples, 0.25%)</title><rect x="1104.5" y="484" width="2.9" height="15.0" fill="rgb(230,24,15)" rx="2" ry="2" />
+<text text-anchor="" x="1107.45" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1176) (1 samples, 0.25%)</title><rect x="1184.1" y="468" width="3.0" height="15.0" fill="rgb(207,189,24)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>all (400 samples, 100%)</title><rect x="10.0" y="36" width="1180.0" height="15.0" fill="rgb(217,178,29)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="46.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1086.8" y="516" width="2.9" height="15.0" fill="rgb(244,128,11)" rx="2" ry="2" />
+<text text-anchor="" x="1089.75" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:415) (3 samples, 0.75%)</title><rect x="1069.0" y="436" width="8.9" height="15.0" fill="rgb(216,124,17)" rx="2" ry="2" />
+<text text-anchor="" x="1072.05" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>&lt;module&gt; (E:/softeq/kite_runner.py:37) (398 samples, 99.50%)</title><rect x="12.9" y="52" width="1174.2" height="15.0" fill="rgb(223,42,51)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="62.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >&lt;module&gt; (E:/softeq/kite_runner.py:37)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:318) (346 samples, 86.50%)</title><rect x="21.8" y="388" width="1020.7" height="15.0" fill="rgb(215,17,51)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_tag (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:318)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>dispatch_success_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:191) (1 samples, 0.25%)</title><rect x="1069.0" y="484" width="3.0" height="15.0" fill="rgb(246,81,8)" rx="2" ry="2" />
+<text text-anchor="" x="1072.05" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>tests_execute (E:\softeq\kite\core\units\interfaces\runner.py:98) (398 samples, 99.50%)</title><rect x="12.9" y="196" width="1174.2" height="15.0" fill="rgb(232,4,36)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="206.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tests_execute (E:\softeq\kite\core\units\interfaces\runner.py:98)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>assign_command (E:\softeq\kite\core\run_values\command_information.py:138) (4 samples, 1.00%)</title><rect x="1116.2" y="420" width="11.8" height="15.0" fill="rgb(239,85,31)" rx="2" ry="2" />
+<text text-anchor="" x="1119.25" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>entire_drive_random (E:\softeq\Tests\SATA\lib\precondition.py:80) (397 samples, 99.25%)</title><rect x="15.9" y="340" width="1171.2" height="15.0" fill="rgb(242,181,49)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="350.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >entire_drive_random (E:\softeq\Tests\SATA\lib\precondition.py:80)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (3 samples, 0.75%)</title><rect x="1178.2" y="420" width="8.9" height="15.0" fill="rgb(208,84,21)" rx="2" ry="2" />
+<text text-anchor="" x="1181.20" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:124) (3 samples, 0.75%)</title><rect x="1045.5" y="404" width="8.8" height="15.0" fill="rgb(208,17,48)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:112) (3 samples, 0.75%)</title><rect x="1136.9" y="452" width="8.9" height="15.0" fill="rgb(239,187,54)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>run (E:/softeq/kite_runner.py:33) (398 samples, 99.50%)</title><rect x="12.9" y="68" width="1174.2" height="15.0" fill="rgb(242,92,19)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="78.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >run (E:/softeq/kite_runner.py:33)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (36 samples, 9.00%)</title><rect x="915.7" y="516" width="106.2" height="15.0" fill="rgb(212,202,45)" rx="2" ry="2" />
+<text text-anchor="" x="918.65" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Delay (E:\s..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:416) (5 samples, 1.25%)</title><rect x="1077.9" y="436" width="14.8" height="15.0" fill="rgb(250,190,8)" rx="2" ry="2" />
+<text text-anchor="" x="1080.90" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:128) (4 samples, 1.00%)</title><rect x="1080.9" y="452" width="11.8" height="15.0" fill="rgb(217,214,19)" rx="2" ry="2" />
+<text text-anchor="" x="1083.85" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>&lt;lambda&gt; (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:250) (398 samples, 99.50%)</title><rect x="12.9" y="324" width="1174.2" height="15.0" fill="rgb(235,182,3)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="334.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >&lt;lambda&gt; (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:250)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_command_buf (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1344) (1 samples, 0.25%)</title><rect x="12.9" y="452" width="3.0" height="15.0" fill="rgb(236,175,28)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1176) (9 samples, 2.25%)</title><rect x="1066.1" y="404" width="26.6" height="15.0" fill="rgb(218,229,51)" rx="2" ry="2" />
+<text text-anchor="" x="1069.10" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >g..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:124) (5 samples, 1.25%)</title><rect x="1098.5" y="404" width="14.8" height="15.0" fill="rgb(222,61,43)" rx="2" ry="2" />
+<text text-anchor="" x="1101.55" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_parsed_response_status (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1166) (1 samples, 0.25%)</title><rect x="815.4" y="500" width="2.9" height="15.0" fill="rgb(234,21,28)" rx="2" ry="2" />
+<text text-anchor="" x="818.35" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:49) (2 samples, 0.50%)</title><rect x="1154.6" y="404" width="5.9" height="15.0" fill="rgb(234,32,25)" rx="2" ry="2" />
+<text text-anchor="" x="1157.60" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (1 samples, 0.25%)</title><rect x="12.9" y="420" width="3.0" height="15.0" fill="rgb(241,138,34)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:557) (1 samples, 0.25%)</title><rect x="1042.5" y="500" width="3.0" height="15.0" fill="rgb(225,179,10)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:44) (3 samples, 0.75%)</title><rect x="1145.8" y="404" width="8.8" height="15.0" fill="rgb(236,207,8)" rx="2" ry="2" />
+<text text-anchor="" x="1148.75" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get (E:\softeq\Tests\SATA\lib\access_patterns.py:45) (2 samples, 0.50%)</title><rect x="15.9" y="356" width="5.9" height="15.0" fill="rgb(248,140,25)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="366.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1222) (1 samples, 0.25%)</title><rect x="903.9" y="468" width="2.9" height="15.0" fill="rgb(230,34,2)" rx="2" ry="2" />
+<text text-anchor="" x="906.85" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>iter_cmd_idx_events (E:\softeq\kite\core\events\subscriber.py:66) (1 samples, 0.25%)</title><rect x="1187.1" y="52" width="2.9" height="15.0" fill="rgb(229,125,10)" rx="2" ry="2" />
+<text text-anchor="" x="1190.05" y="62.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>clear_info (E:\softeq\common_libs\functional.py:503) (1 samples, 0.25%)</title><rect x="1128.0" y="420" width="3.0" height="15.0" fill="rgb(247,185,25)" rx="2" ry="2" />
+<text text-anchor="" x="1131.05" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="27.7" y="452" width="3.0" height="15.0" fill="rgb(208,39,22)" rx="2" ry="2" />
+<text text-anchor="" x="30.70" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>assign_command (E:\softeq\kite\core\run_values\command_information.py:137) (1 samples, 0.25%)</title><rect x="1113.3" y="420" width="2.9" height="15.0" fill="rgb(246,11,8)" rx="2" ry="2" />
+<text text-anchor="" x="1116.30" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_run_test (E:\softeq\kite\units\executor\safe_mimiq.py:23) (398 samples, 99.50%)</title><rect x="12.9" y="260" width="1174.2" height="15.0" fill="rgb(222,13,12)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="270.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_run_test (E:\softeq\kite\units\executor\safe_mimiq.py:23)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>dispatch_success_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:191) (1 samples, 0.25%)</title><rect x="906.8" y="484" width="3.0" height="15.0" fill="rgb(252,162,0)" rx="2" ry="2" />
+<text text-anchor="" x="909.80" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_record (E:\softeq\kite\plugins\native\mimiq_logging.py:238) (2 samples, 0.50%)</title><rect x="1169.4" y="484" width="5.8" height="15.0" fill="rgb(226,105,23)" rx="2" ry="2" />
+<text text-anchor="" x="1172.35" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:109) (1 samples, 0.25%)</title><rect x="833.1" y="484" width="2.9" height="15.0" fill="rgb(219,203,17)" rx="2" ry="2" />
+<text text-anchor="" x="836.05" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1150) (3 samples, 0.75%)</title><rect x="1045.5" y="468" width="8.8" height="15.0" fill="rgb(233,68,44)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (37 samples, 9.25%)</title><rect x="912.7" y="500" width="109.2" height="15.0" fill="rgb(234,127,48)" rx="2" ry="2" />
+<text text-anchor="" x="915.70" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_check_res..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>copy (C:\Python27.64bit\lib\collections.py:206) (1 samples, 0.25%)</title><rect x="1101.5" y="484" width="3.0" height="15.0" fill="rgb(233,59,24)" rx="2" ry="2" />
+<text text-anchor="" x="1104.50" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:257) (2 samples, 0.50%)</title><rect x="1136.9" y="500" width="5.9" height="15.0" fill="rgb(231,166,16)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:562) (3 samples, 0.75%)</title><rect x="1045.5" y="484" width="8.8" height="15.0" fill="rgb(226,222,50)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="24.8" y="468" width="2.9" height="15.0" fill="rgb(213,124,17)" rx="2" ry="2" />
+<text text-anchor="" x="27.75" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_mq_time_object (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:88) (1 samples, 0.25%)</title><rect x="800.6" y="500" width="3.0" height="15.0" fill="rgb(248,75,33)" rx="2" ry="2" />
+<text text-anchor="" x="803.60" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>setup_unit (E:\softeq\kite\core\units\interfaces\executor.py:69) (398 samples, 99.50%)</title><rect x="12.9" y="244" width="1174.2" height="15.0" fill="rgb(218,144,11)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="254.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >setup_unit (E:\softeq\kite\core\units\interfaces\executor.py:69)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:452) (1 samples, 0.25%)</title><rect x="12.9" y="436" width="3.0" height="15.0" fill="rgb(241,141,8)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>current_command (E:\softeq\kite\core\run_values\command_information.py:109) (1 samples, 0.25%)</title><rect x="1054.3" y="468" width="2.9" height="15.0" fill="rgb(229,129,29)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:485) (1 samples, 0.25%)</title><rect x="1175.2" y="468" width="3.0" height="15.0" fill="rgb(253,67,3)" rx="2" ry="2" />
+<text text-anchor="" x="1178.25" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:283) (4 samples, 1.00%)</title><rect x="1166.4" y="452" width="11.8" height="15.0" fill="rgb(241,156,49)" rx="2" ry="2" />
+<text text-anchor="" x="1169.40" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:472) (1 samples, 0.25%)</title><rect x="1042.5" y="484" width="3.0" height="15.0" fill="rgb(254,163,19)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:873) (8 samples, 2.00%)</title><rect x="1069.0" y="420" width="23.7" height="15.0" fill="rgb(245,193,50)" rx="2" ry="2" />
+<text text-anchor="" x="1072.05" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >w..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Buffer.py:74) (1 samples, 0.25%)</title><rect x="1110.4" y="468" width="2.9" height="15.0" fill="rgb(241,103,18)" rx="2" ry="2" />
+<text text-anchor="" x="1113.35" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:412) (293 samples, 73.25%)</title><rect x="30.7" y="436" width="864.3" height="15.0" fill="rgb(222,183,9)" rx="2" ry="2" />
+<text text-anchor="" x="33.65" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:412)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:167) (1 samples, 0.25%)</title><rect x="812.4" y="500" width="3.0" height="15.0" fill="rgb(206,142,36)" rx="2" ry="2" />
+<text text-anchor="" x="815.40" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1150) (1 samples, 0.25%)</title><rect x="1157.6" y="468" width="2.9" height="15.0" fill="rgb(248,176,6)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:44) (1 samples, 0.25%)</title><rect x="12.9" y="372" width="3.0" height="15.0" fill="rgb(236,90,52)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="382.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>info (E:\softeq\kite\plugins\native\mimiq_logging.py:241) (2 samples, 0.50%)</title><rect x="1169.4" y="468" width="5.8" height="15.0" fill="rgb(242,169,17)" rx="2" ry="2" />
+<text text-anchor="" x="1172.35" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:128) (1 samples, 0.25%)</title><rect x="1063.2" y="452" width="2.9" height="15.0" fill="rgb(250,183,9)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Buffer.py:17) (1 samples, 0.25%)</title><rect x="1080.9" y="500" width="2.9" height="15.0" fill="rgb(225,209,17)" rx="2" ry="2" />
+<text text-anchor="" x="1083.85" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:526) (1 samples, 0.25%)</title><rect x="1122.2" y="468" width="2.9" height="15.0" fill="rgb(248,144,29)" rx="2" ry="2" />
+<text text-anchor="" x="1125.15" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Buffer.py:74) (1 samples, 0.25%)</title><rect x="1039.5" y="452" width="3.0" height="15.0" fill="rgb(207,217,24)" rx="2" ry="2" />
+<text text-anchor="" x="1042.55" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:100) (10 samples, 2.50%)</title><rect x="66.1" y="484" width="29.5" height="15.0" fill="rgb(244,161,26)" rx="2" ry="2" />
+<text text-anchor="" x="69.05" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_D..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (255 samples, 63.75%)</title><rect x="66.1" y="468" width="752.2" height="15.0" fill="rgb(249,94,23)" rx="2" ry="2" />
+<text text-anchor="" x="69.05" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Buffer.py:16) (1 samples, 0.25%)</title><rect x="48.4" y="468" width="2.9" height="15.0" fill="rgb(231,111,17)" rx="2" ry="2" />
+<text text-anchor="" x="51.35" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:200) (1 samples, 0.25%)</title><rect x="27.7" y="468" width="3.0" height="15.0" fill="rgb(212,174,39)" rx="2" ry="2" />
+<text text-anchor="" x="30.70" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="898.0" y="452" width="2.9" height="15.0" fill="rgb(224,88,51)" rx="2" ry="2" />
+<text text-anchor="" x="900.95" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (C:\Python27.64bit\lib\collections.py:69) (1 samples, 0.25%)</title><rect x="1095.6" y="500" width="2.9" height="15.0" fill="rgb(218,131,45)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\core\events\plugin_management.py:232) (1 samples, 0.25%)</title><rect x="1054.3" y="436" width="2.9" height="15.0" fill="rgb(228,110,46)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1233) (3 samples, 0.75%)</title><rect x="1083.8" y="468" width="8.9" height="15.0" fill="rgb(249,195,2)" rx="2" ry="2" />
+<text text-anchor="" x="1086.80" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_command_buf (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1340) (1 samples, 0.25%)</title><rect x="1107.4" y="452" width="3.0" height="15.0" fill="rgb(248,214,41)" rx="2" ry="2" />
+<text text-anchor="" x="1110.40" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_command_buf (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1339) (1 samples, 0.25%)</title><rect x="1181.2" y="452" width="2.9" height="15.0" fill="rgb(226,222,3)" rx="2" ry="2" />
+<text text-anchor="" x="1184.15" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1075.0" y="484" width="2.9" height="15.0" fill="rgb(248,185,51)" rx="2" ry="2" />
+<text text-anchor="" x="1077.95" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:318) (1 samples, 0.25%)</title><rect x="1184.1" y="452" width="3.0" height="15.0" fill="rgb(206,46,1)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:450) (2 samples, 0.50%)</title><rect x="1057.2" y="436" width="6.0" height="15.0" fill="rgb(217,224,3)" rx="2" ry="2" />
+<text text-anchor="" x="1060.25" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:557) (1 samples, 0.25%)</title><rect x="1175.2" y="500" width="3.0" height="15.0" fill="rgb(224,138,12)" rx="2" ry="2" />
+<text text-anchor="" x="1178.25" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>TestMain (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:255) (398 samples, 99.50%)</title><rect x="12.9" y="276" width="1174.2" height="15.0" fill="rgb(229,64,43)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="286.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >TestMain (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:255)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\layouts\event.py:19) (1 samples, 0.25%)</title><rect x="1054.3" y="420" width="2.9" height="15.0" fill="rgb(208,185,51)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1150) (3 samples, 0.75%)</title><rect x="1136.9" y="468" width="8.9" height="15.0" fill="rgb(211,130,37)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\kite\__init__.py:36) (398 samples, 99.50%)</title><rect x="12.9" y="100" width="1174.2" height="15.0" fill="rgb(223,48,19)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="110.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wrapper (E:\softeq\kite\__init__.py:36)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (5 samples, 1.25%)</title><rect x="818.3" y="484" width="14.8" height="15.0" fill="rgb(214,118,26)" rx="2" ry="2" />
+<text text-anchor="" x="821.30" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>execute_prepare (E:\softeq\kite\core\units\interface.py:55) (398 samples, 99.50%)</title><rect x="12.9" y="228" width="1174.2" height="15.0" fill="rgb(229,119,29)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="238.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >execute_prepare (E:\softeq\kite\core\units\interface.py:55)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:415) (46 samples, 11.50%)</title><rect x="900.9" y="436" width="135.7" height="15.0" fill="rgb(244,224,7)" rx="2" ry="2" />
+<text text-anchor="" x="903.90" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wait_free_tags (E..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:472) (1 samples, 0.25%)</title><rect x="1154.6" y="452" width="3.0" height="15.0" fill="rgb(221,191,13)" rx="2" ry="2" />
+<text text-anchor="" x="1157.60" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (C:\Python27.64bit\lib\collections.py:69) (1 samples, 0.25%)</title><rect x="1125.1" y="484" width="2.9" height="15.0" fill="rgb(254,50,31)" rx="2" ry="2" />
+<text text-anchor="" x="1128.10" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:471) (3 samples, 0.75%)</title><rect x="1119.2" y="452" width="8.8" height="15.0" fill="rgb(236,100,41)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\core\events\plugin_management.py:232) (3 samples, 0.75%)</title><rect x="1098.5" y="436" width="8.9" height="15.0" fill="rgb(238,49,52)" rx="2" ry="2" />
+<text text-anchor="" x="1101.55" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="21.8" y="468" width="3.0" height="15.0" fill="rgb(249,126,4)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:415) (1 samples, 0.25%)</title><rect x="1063.2" y="436" width="2.9" height="15.0" fill="rgb(222,130,29)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Buffer.py:17) (1 samples, 0.25%)</title><rect x="895.0" y="468" width="3.0" height="15.0" fill="rgb(247,38,9)" rx="2" ry="2" />
+<text text-anchor="" x="898.00" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="21.8" y="452" width="3.0" height="15.0" fill="rgb(221,51,8)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1225) (1 samples, 0.25%)</title><rect x="1030.7" y="468" width="3.0" height="15.0" fill="rgb(241,185,0)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Buffer.py:17) (1 samples, 0.25%)</title><rect x="1039.5" y="468" width="3.0" height="15.0" fill="rgb(217,196,10)" rx="2" ry="2" />
+<text text-anchor="" x="1042.55" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1223) (2 samples, 0.50%)</title><rect x="1069.0" y="468" width="6.0" height="15.0" fill="rgb(240,6,41)" rx="2" ry="2" />
+<text text-anchor="" x="1072.05" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\libs\sata\response.py:231) (1 samples, 0.25%)</title><rect x="903.9" y="516" width="2.9" height="15.0" fill="rgb(250,95,40)" rx="2" ry="2" />
+<text text-anchor="" x="906.85" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_mq_time_object (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:88) (2 samples, 0.50%)</title><rect x="89.7" y="500" width="5.9" height="15.0" fill="rgb(252,10,44)" rx="2" ry="2" />
+<text text-anchor="" x="92.65" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1030.7" y="516" width="3.0" height="15.0" fill="rgb(233,91,54)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:164) (1 samples, 0.25%)</title><rect x="806.5" y="500" width="3.0" height="15.0" fill="rgb(250,81,2)" rx="2" ry="2" />
+<text text-anchor="" x="809.50" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:257) (2 samples, 0.50%)</title><rect x="1045.5" y="500" width="5.9" height="15.0" fill="rgb(239,113,15)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>ensure_success_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:227) (1 samples, 0.25%)</title><rect x="1142.8" y="516" width="3.0" height="15.0" fill="rgb(235,144,32)" rx="2" ry="2" />
+<text text-anchor="" x="1145.80" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:167) (2 samples, 0.50%)</title><rect x="782.9" y="500" width="5.9" height="15.0" fill="rgb(212,223,9)" rx="2" ry="2" />
+<text text-anchor="" x="785.90" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1072.0" y="484" width="3.0" height="15.0" fill="rgb(228,151,11)" rx="2" ry="2" />
+<text text-anchor="" x="1075.00" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Buffer.py:74) (1 samples, 0.25%)</title><rect x="895.0" y="452" width="3.0" height="15.0" fill="rgb(229,36,29)" rx="2" ry="2" />
+<text text-anchor="" x="898.00" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:166) (1 samples, 0.25%)</title><rect x="892.1" y="500" width="2.9" height="15.0" fill="rgb(248,138,50)" rx="2" ry="2" />
+<text text-anchor="" x="895.05" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="898.0" y="484" width="2.9" height="15.0" fill="rgb(249,112,7)" rx="2" ry="2" />
+<text text-anchor="" x="900.95" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:283) (1 samples, 0.25%)</title><rect x="1042.5" y="452" width="3.0" height="15.0" fill="rgb(212,27,20)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:413) (2 samples, 0.50%)</title><rect x="895.0" y="436" width="5.9" height="15.0" fill="rgb(234,182,51)" rx="2" ry="2" />
+<text text-anchor="" x="898.00" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:200) (7 samples, 1.75%)</title><rect x="818.3" y="468" width="20.7" height="15.0" fill="rgb(235,67,7)" rx="2" ry="2" />
+<text text-anchor="" x="821.30" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1225) (1 samples, 0.25%)</title><rect x="1075.0" y="468" width="2.9" height="15.0" fill="rgb(226,133,45)" rx="2" ry="2" />
+<text text-anchor="" x="1077.95" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:283) (3 samples, 0.75%)</title><rect x="1098.5" y="452" width="8.9" height="15.0" fill="rgb(208,67,41)" rx="2" ry="2" />
+<text text-anchor="" x="1101.55" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:411) (1 samples, 0.25%)</title><rect x="27.7" y="436" width="3.0" height="15.0" fill="rgb(210,203,41)" rx="2" ry="2" />
+<text text-anchor="" x="30.70" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>copy (C:\Python27.64bit\lib\collections.py:206) (1 samples, 0.25%)</title><rect x="1148.7" y="452" width="3.0" height="15.0" fill="rgb(219,164,17)" rx="2" ry="2" />
+<text text-anchor="" x="1151.70" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>execute_scheme (E:\softeq\kite\core\units\interface.py:46) (398 samples, 99.50%)</title><rect x="12.9" y="164" width="1174.2" height="15.0" fill="rgb(250,195,19)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="174.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >execute_scheme (E:\softeq\kite\core\units\interface.py:46)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="24.8" y="484" width="2.9" height="15.0" fill="rgb(235,188,42)" rx="2" ry="2" />
+<text text-anchor="" x="27.75" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:477) (1 samples, 0.25%)</title><rect x="1154.6" y="436" width="3.0" height="15.0" fill="rgb(222,215,8)" rx="2" ry="2" />
+<text text-anchor="" x="1157.60" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:55) (3 samples, 0.75%)</title><rect x="1054.3" y="404" width="8.9" height="15.0" fill="rgb(214,51,11)" rx="2" ry="2" />
+<text text-anchor="" x="1057.30" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1184.1" y="580" width="3.0" height="15.0" fill="rgb(215,122,40)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="590.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_mq_time_object (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:88) (1 samples, 0.25%)</title><rect x="780.0" y="500" width="2.9" height="15.0" fill="rgb(211,99,49)" rx="2" ry="2" />
+<text text-anchor="" x="782.95" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:281) (1 samples, 0.25%)</title><rect x="1163.5" y="452" width="2.9" height="15.0" fill="rgb(230,37,46)" rx="2" ry="2" />
+<text text-anchor="" x="1166.45" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:264) (1 samples, 0.25%)</title><rect x="1142.8" y="500" width="3.0" height="15.0" fill="rgb(240,220,52)" rx="2" ry="2" />
+<text text-anchor="" x="1145.80" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>is_buffer_success (E:\softeq\kite\libs\sata\response.py:372) (1 samples, 0.25%)</title><rect x="1089.7" y="484" width="3.0" height="15.0" fill="rgb(231,19,24)" rx="2" ry="2" />
+<text text-anchor="" x="1092.70" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>entire_drive_random (E:\softeq\Tests\SATA\lib\precondition.py:79) (1 samples, 0.25%)</title><rect x="12.9" y="340" width="3.0" height="15.0" fill="rgb(223,190,2)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="350.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:471) (1 samples, 0.25%)</title><rect x="1151.7" y="452" width="2.9" height="15.0" fill="rgb(220,156,13)" rx="2" ry="2" />
+<text text-anchor="" x="1154.65" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>main_run (E:\softeq\kite\core\stages.py:60) (398 samples, 99.50%)</title><rect x="12.9" y="148" width="1174.2" height="15.0" fill="rgb(233,17,21)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="158.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >main_run (E:\softeq\kite\core\stages.py:60)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1233) (1 samples, 0.25%)</title><rect x="1184.1" y="532" width="3.0" height="15.0" fill="rgb(219,53,2)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="542.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_mq_time_object (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:85) (1 samples, 0.25%)</title><rect x="777.0" y="500" width="3.0" height="15.0" fill="rgb(231,227,16)" rx="2" ry="2" />
+<text text-anchor="" x="780.00" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:914) (395 samples, 98.75%)</title><rect x="21.8" y="356" width="1165.3" height="15.0" fill="rgb(207,90,38)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="366.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >write_fpdma (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:914)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (281 samples, 70.25%)</title><rect x="66.1" y="452" width="828.9" height="15.0" fill="rgb(240,227,18)" rx="2" ry="2" />
+<text text-anchor="" x="69.05" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>assign_command (E:\softeq\kite\core\run_values\command_information.py:138) (2 samples, 0.50%)</title><rect x="1148.7" y="420" width="5.9" height="15.0" fill="rgb(207,103,3)" rx="2" ry="2" />
+<text text-anchor="" x="1151.70" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:259) (1 samples, 0.25%)</title><rect x="1051.4" y="500" width="2.9" height="15.0" fill="rgb(236,202,0)" rx="2" ry="2" />
+<text text-anchor="" x="1054.35" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>set_extra_kwargs (E:\softeq\common_libs\functional.py:489) (1 samples, 0.25%)</title><rect x="1134.0" y="420" width="2.9" height="15.0" fill="rgb(236,71,22)" rx="2" ry="2" />
+<text text-anchor="" x="1136.95" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1063.2" y="516" width="2.9" height="15.0" fill="rgb(246,4,28)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="24.8" y="452" width="2.9" height="15.0" fill="rgb(212,37,34)" rx="2" ry="2" />
+<text text-anchor="" x="27.75" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="1063.2" y="500" width="2.9" height="15.0" fill="rgb(228,162,7)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:452) (3 samples, 0.75%)</title><rect x="1045.5" y="436" width="8.8" height="15.0" fill="rgb(223,57,51)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (C:\Python27.64bit\lib\collections.py:69) (1 samples, 0.25%)</title><rect x="1104.5" y="516" width="2.9" height="15.0" fill="rgb(227,69,2)" rx="2" ry="2" />
+<text text-anchor="" x="1107.45" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>rand (E:\softeq\Tests\SATA\lib\utilities.py:16) (2 samples, 0.50%)</title><rect x="15.9" y="372" width="5.9" height="15.0" fill="rgb(214,51,50)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="382.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:166) (1 samples, 0.25%)</title><rect x="809.5" y="500" width="2.9" height="15.0" fill="rgb(243,91,52)" rx="2" ry="2" />
+<text text-anchor="" x="812.45" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:416) (1 samples, 0.25%)</title><rect x="1184.1" y="500" width="3.0" height="15.0" fill="rgb(222,63,16)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (C:\Python27.64bit\lib\collections.py:69) (1 samples, 0.25%)</title><rect x="1042.5" y="516" width="3.0" height="15.0" fill="rgb(212,174,26)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\core\events\plugin_management.py:232) (1 samples, 0.25%)</title><rect x="1042.5" y="436" width="3.0" height="15.0" fill="rgb(251,82,19)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (3 samples, 0.75%)</title><rect x="1136.9" y="420" width="8.9" height="15.0" fill="rgb(254,156,26)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:128) (44 samples, 11.00%)</title><rect x="903.9" y="452" width="129.8" height="15.0" fill="rgb(244,182,22)" rx="2" ry="2" />
+<text text-anchor="" x="906.85" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >check_for_respon..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>randint (C:\Python27.64bit\lib\random.py:244) (2 samples, 0.50%)</title><rect x="15.9" y="388" width="5.9" height="15.0" fill="rgb(206,61,31)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1172) (1 samples, 0.25%)</title><rect x="1063.2" y="404" width="2.9" height="15.0" fill="rgb(251,176,33)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (2 samples, 0.50%)</title><rect x="1107.4" y="420" width="5.9" height="15.0" fill="rgb(241,228,47)" rx="2" ry="2" />
+<text text-anchor="" x="1110.40" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:104) (6 samples, 1.50%)</title><rect x="788.8" y="484" width="17.7" height="15.0" fill="rgb(207,21,5)" rx="2" ry="2" />
+<text text-anchor="" x="791.80" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\core\events\plugin_management.py:232) (5 samples, 1.25%)</title><rect x="1163.5" y="436" width="14.7" height="15.0" fill="rgb(238,56,47)" rx="2" ry="2" />
+<text text-anchor="" x="1166.45" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:41) (11 samples, 2.75%)</title><rect x="1113.3" y="404" width="32.5" height="15.0" fill="rgb(247,128,50)" rx="2" ry="2" />
+<text text-anchor="" x="1116.30" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>on_fpdma_command_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:33) (1 samples, 0.25%)</title><rect x="836.0" y="484" width="3.0" height="15.0" fill="rgb(207,84,32)" rx="2" ry="2" />
+<text text-anchor="" x="839.00" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:201) (1 samples, 0.25%)</title><rect x="1021.9" y="500" width="2.9" height="15.0" fill="rgb(244,117,14)" rx="2" ry="2" />
+<text text-anchor="" x="1024.85" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:416) (2 samples, 0.50%)</title><rect x="1036.6" y="436" width="5.9" height="15.0" fill="rgb(251,24,23)" rx="2" ry="2" />
+<text text-anchor="" x="1039.60" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:477) (2 samples, 0.50%)</title><rect x="1148.7" y="436" width="5.9" height="15.0" fill="rgb(253,77,35)" rx="2" ry="2" />
+<text text-anchor="" x="1151.70" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>refuse_command (E:\softeq\kite\core\run_values\command_information.py:148) (1 samples, 0.25%)</title><rect x="1131.0" y="420" width="3.0" height="15.0" fill="rgb(211,79,25)" rx="2" ry="2" />
+<text text-anchor="" x="1134.00" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:562) (1 samples, 0.25%)</title><rect x="1157.6" y="484" width="2.9" height="15.0" fill="rgb(229,61,15)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_command_buf (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1346) (1 samples, 0.25%)</title><rect x="1110.4" y="452" width="2.9" height="15.0" fill="rgb(222,222,15)" rx="2" ry="2" />
+<text text-anchor="" x="1113.35" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_parsed_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:294) (1 samples, 0.25%)</title><rect x="815.4" y="484" width="2.9" height="15.0" fill="rgb(247,153,2)" rx="2" ry="2" />
+<text text-anchor="" x="818.35" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>do_unit_action (E:\softeq\kite\core\units\interfaces\runner.py:71) (398 samples, 99.50%)</title><rect x="12.9" y="180" width="1174.2" height="15.0" fill="rgb(214,210,14)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="190.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >do_unit_action (E:\softeq\kite\core\units\interfaces\runner.py:71)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:202) (1 samples, 0.25%)</title><rect x="1086.8" y="500" width="2.9" height="15.0" fill="rgb(250,126,12)" rx="2" ry="2" />
+<text text-anchor="" x="1089.75" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:55) (1 samples, 0.25%)</title><rect x="12.9" y="404" width="3.0" height="15.0" fill="rgb(235,119,16)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\common_libs\functional.py:346) (32 samples, 8.00%)</title><rect x="1092.7" y="388" width="94.4" height="15.0" fill="rgb(220,204,13)" rx="2" ry="2" />
+<text text-anchor="" x="1095.65" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wrapper (E:..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:109) (2 samples, 0.50%)</title><rect x="806.5" y="484" width="5.9" height="15.0" fill="rgb(205,192,34)" rx="2" ry="2" />
+<text text-anchor="" x="809.50" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\common_libs\functional.py:346) (1 samples, 0.25%)</title><rect x="12.9" y="388" width="3.0" height="15.0" fill="rgb(235,147,4)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:119) (2 samples, 0.50%)</title><rect x="1092.7" y="404" width="5.8" height="15.0" fill="rgb(235,221,12)" rx="2" ry="2" />
+<text text-anchor="" x="1095.65" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wa_check (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:106) (398 samples, 99.50%)</title><rect x="12.9" y="292" width="1174.2" height="15.0" fill="rgb(224,68,19)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="302.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wa_check (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:106)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:104) (1 samples, 0.25%)</title><rect x="889.1" y="484" width="3.0" height="15.0" fill="rgb(208,155,43)" rx="2" ry="2" />
+<text text-anchor="" x="892.10" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\layouts\event.py:19) (3 samples, 0.75%)</title><rect x="1098.5" y="420" width="8.9" height="15.0" fill="rgb(250,203,13)" rx="2" ry="2" />
+<text text-anchor="" x="1101.55" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:201) (1 samples, 0.25%)</title><rect x="839.0" y="468" width="2.9" height="15.0" fill="rgb(221,83,26)" rx="2" ry="2" />
+<text text-anchor="" x="841.95" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_tag (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:318) (10 samples, 2.50%)</title><rect x="1063.2" y="388" width="29.5" height="15.0" fill="rgb(222,68,41)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >ge..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:485) (1 samples, 0.25%)</title><rect x="1042.5" y="468" width="3.0" height="15.0" fill="rgb(217,101,23)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="21.8" y="484" width="3.0" height="15.0" fill="rgb(253,0,19)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_make_call_args_mapping (E:\softeq\common_libs\functional.py:557) (1 samples, 0.25%)</title><rect x="1104.5" y="500" width="2.9" height="15.0" fill="rgb(254,77,39)" rx="2" ry="2" />
+<text text-anchor="" x="1107.45" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="1075.0" y="500" width="2.9" height="15.0" fill="rgb(244,79,50)" rx="2" ry="2" />
+<text text-anchor="" x="1077.95" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\layouts\event.py:19) (6 samples, 1.50%)</title><rect x="1160.5" y="420" width="17.7" height="15.0" fill="rgb(217,77,34)" rx="2" ry="2" />
+<text text-anchor="" x="1163.50" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:119) (1 samples, 0.25%)</title><rect x="1042.5" y="404" width="3.0" height="15.0" fill="rgb(230,206,3)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:128) (1 samples, 0.25%)</title><rect x="1184.1" y="516" width="3.0" height="15.0" fill="rgb(229,148,42)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:485) (2 samples, 0.50%)</title><rect x="1101.5" y="468" width="5.9" height="15.0" fill="rgb(234,52,14)" rx="2" ry="2" />
+<text text-anchor="" x="1104.50" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1033.7" y="452" width="2.9" height="15.0" fill="rgb(228,148,30)" rx="2" ry="2" />
+<text text-anchor="" x="1036.65" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:202) (1 samples, 0.25%)</title><rect x="1072.0" y="500" width="3.0" height="15.0" fill="rgb(207,82,43)" rx="2" ry="2" />
+<text text-anchor="" x="1075.00" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:914) (1 samples, 0.25%)</title><rect x="12.9" y="356" width="3.0" height="15.0" fill="rgb(241,12,50)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="366.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_create_mq_time_object (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:88) (2 samples, 0.50%)</title><rect x="883.2" y="500" width="5.9" height="15.0" fill="rgb(206,41,39)" rx="2" ry="2" />
+<text text-anchor="" x="886.20" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>async_command_runner (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:112) (3 samples, 0.75%)</title><rect x="1045.5" y="452" width="8.8" height="15.0" fill="rgb(225,85,46)" rx="2" ry="2" />
+<text text-anchor="" x="1048.45" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>&lt;genexpr&gt; (E:\softeq\kite\libs\sata\response.py:167) (1 samples, 0.25%)</title><rect x="10.0" y="52" width="2.9" height="15.0" fill="rgb(236,89,9)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="62.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:43) (353 samples, 88.25%)</title><rect x="21.8" y="372" width="1041.4" height="15.0" fill="rgb(237,95,34)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="382.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wrapper (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:43)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:452) (3 samples, 0.75%)</title><rect x="1136.9" y="436" width="8.9" height="15.0" fill="rgb(206,68,3)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>single_run (E:\softeq\kite\__init__.py:74) (398 samples, 99.50%)</title><rect x="12.9" y="132" width="1174.2" height="15.0" fill="rgb(254,152,0)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="142.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >single_run (E:\softeq\kite\__init__.py:74)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1184.1" y="548" width="3.0" height="15.0" fill="rgb(238,162,44)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="558.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1072.0" y="516" width="3.0" height="15.0" fill="rgb(244,2,44)" rx="2" ry="2" />
+<text text-anchor="" x="1075.00" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>callback (E:\softeq\kite\plugins\native\_logging_helper.py:283) (1 samples, 0.25%)</title><rect x="1095.6" y="452" width="2.9" height="15.0" fill="rgb(243,154,32)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:873) (346 samples, 86.50%)</title><rect x="21.8" y="420" width="1020.7" height="15.0" fill="rgb(238,74,27)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wait_free_tags (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:873)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\libs\bridge\decorators.py:55) (9 samples, 2.25%)</title><rect x="1160.5" y="404" width="26.6" height="15.0" fill="rgb(221,165,30)" rx="2" ry="2" />
+<text text-anchor="" x="1163.50" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:408) (1 samples, 0.25%)</title><rect x="24.8" y="436" width="2.9" height="15.0" fill="rgb(242,151,40)" rx="2" ry="2" />
+<text text-anchor="" x="27.75" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:98) (1 samples, 0.25%)</title><rect x="812.4" y="484" width="3.0" height="15.0" fill="rgb(249,104,54)" rx="2" ry="2" />
+<text text-anchor="" x="815.40" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params (E:\softeq\common_libs\functional.py:472) (1 samples, 0.25%)</title><rect x="1175.2" y="484" width="3.0" height="15.0" fill="rgb(233,127,23)" rx="2" ry="2" />
+<text text-anchor="" x="1178.25" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (41 samples, 10.25%)</title><rect x="909.8" y="484" width="120.9" height="15.0" fill="rgb(209,138,30)" rx="2" ry="2" />
+<text text-anchor="" x="912.75" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >get_check_respo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:873) (1 samples, 0.25%)</title><rect x="1184.1" y="484" width="3.0" height="15.0" fill="rgb(226,44,34)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\layouts\event.py:19) (1 samples, 0.25%)</title><rect x="1095.6" y="420" width="2.9" height="15.0" fill="rgb(209,87,23)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1223) (42 samples, 10.50%)</title><rect x="906.8" y="468" width="123.9" height="15.0" fill="rgb(221,169,7)" rx="2" ry="2" />
+<text text-anchor="" x="909.80" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >check_for_respo..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1231) (1 samples, 0.25%)</title><rect x="1063.2" y="468" width="2.9" height="15.0" fill="rgb(245,28,41)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>execute_scheme (E:\softeq\kite\core\units\interface.py:43) (398 samples, 99.50%)</title><rect x="12.9" y="212" width="1174.2" height="15.0" fill="rgb(240,90,54)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="222.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >execute_scheme (E:\softeq\kite\core\units\interface.py:43)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\kite\libs\exception.py:144) (398 samples, 99.50%)</title><rect x="12.9" y="116" width="1174.2" height="15.0" fill="rgb(249,103,14)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="126.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wrapper (E:\softeq\kite\libs\exception.py:144)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_randbelow (C:\Python27.64bit\lib\random.py:267) (1 samples, 0.25%)</title><rect x="18.9" y="420" width="2.9" height="15.0" fill="rgb(224,124,9)" rx="2" ry="2" />
+<text text-anchor="" x="21.85" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Buffer.py:17) (3 samples, 0.75%)</title><rect x="51.3" y="468" width="8.9" height="15.0" fill="rgb(226,40,27)" rx="2" ry="2" />
+<text text-anchor="" x="54.30" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>ordinary_run (E:\softeq\kite\etc\runner_wrappers\common_helper.py:79) (398 samples, 99.50%)</title><rect x="12.9" y="84" width="1174.2" height="15.0" fill="rgb(246,134,14)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="94.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >ordinary_run (E:\softeq\kite\etc\runner_wrappers\common_helper.py:79)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:44) (42 samples, 10.50%)</title><rect x="1063.2" y="372" width="123.9" height="15.0" fill="rgb(216,44,12)" rx="2" ry="2" />
+<text text-anchor="" x="1066.15" y="382.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >wrapper (E:\sof..</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="898.0" y="468" width="2.9" height="15.0" fill="rgb(208,159,20)" rx="2" ry="2" />
+<text text-anchor="" x="900.95" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:477) (3 samples, 0.75%)</title><rect x="1119.2" y="436" width="8.8" height="15.0" fill="rgb(234,18,40)" rx="2" ry="2" />
+<text text-anchor="" x="1122.20" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:450) (3 samples, 0.75%)</title><rect x="1178.2" y="436" width="8.9" height="15.0" fill="rgb(231,68,28)" rx="2" ry="2" />
+<text text-anchor="" x="1181.20" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:202) (1 samples, 0.25%)</title><rect x="1184.1" y="564" width="3.0" height="15.0" fill="rgb(227,207,35)" rx="2" ry="2" />
+<text text-anchor="" x="1187.10" y="574.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wrapper (E:\softeq\common_libs\functional.py:346) (7 samples, 1.75%)</title><rect x="1042.5" y="388" width="20.7" height="15.0" fill="rgb(232,92,39)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="398.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:166) (1 samples, 0.25%)</title><rect x="833.1" y="500" width="2.9" height="15.0" fill="rgb(214,153,31)" rx="2" ry="2" />
+<text text-anchor="" x="836.05" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:452) (1 samples, 0.25%)</title><rect x="1157.6" y="436" width="2.9" height="15.0" fill="rgb(214,207,38)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>randrange (C:\Python27.64bit\lib\random.py:217) (2 samples, 0.50%)</title><rect x="15.9" y="404" width="5.9" height="15.0" fill="rgb(230,85,3)" rx="2" ry="2" />
+<text text-anchor="" x="18.90" y="414.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_is_enabled_tag (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1179) (2 samples, 0.50%)</title><rect x="60.2" y="452" width="5.9" height="15.0" fill="rgb(212,78,9)" rx="2" ry="2" />
+<text text-anchor="" x="63.15" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>notify (E:\softeq\kite\layouts\event.py:19) (1 samples, 0.25%)</title><rect x="1042.5" y="420" width="3.0" height="15.0" fill="rgb(248,148,30)" rx="2" ry="2" />
+<text text-anchor="" x="1045.50" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>on_fpdma_command_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:33) (1 samples, 0.25%)</title><rect x="1033.7" y="484" width="2.9" height="15.0" fill="rgb(241,228,16)" rx="2" ry="2" />
+<text text-anchor="" x="1036.65" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>send_command (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:562) (3 samples, 0.75%)</title><rect x="1136.9" y="484" width="8.9" height="15.0" fill="rgb(205,199,3)" rx="2" ry="2" />
+<text text-anchor="" x="1139.90" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:1223) (1 samples, 0.25%)</title><rect x="1080.9" y="468" width="2.9" height="15.0" fill="rgb(231,144,17)" rx="2" ry="2" />
+<text text-anchor="" x="1083.85" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>copy (C:\Python27.64bit\lib\collections.py:206) (1 samples, 0.25%)</title><rect x="1095.6" y="484" width="2.9" height="15.0" fill="rgb(217,204,1)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (1 samples, 0.25%)</title><rect x="1030.7" y="484" width="3.0" height="15.0" fill="rgb(225,215,32)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>params_to_print (E:\softeq\common_libs\functional.py:485) (1 samples, 0.25%)</title><rect x="1095.6" y="468" width="2.9" height="15.0" fill="rgb(224,59,26)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__subclasscheck__ (C:\Python27.64bit\lib\abc.py:152) (1 samples, 0.25%)</title><rect x="1095.6" y="516" width="2.9" height="15.0" fill="rgb(229,31,26)" rx="2" ry="2" />
+<text text-anchor="" x="1098.60" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__init__ (E:\softeq\kite\libs\sata\response.py:322) (1 samples, 0.25%)</title><rect x="903.9" y="484" width="2.9" height="15.0" fill="rgb(243,151,33)" rx="2" ry="2" />
+<text text-anchor="" x="906.85" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:100) (1 samples, 0.25%)</title><rect x="912.7" y="516" width="3.0" height="15.0" fill="rgb(205,226,15)" rx="2" ry="2" />
+<text text-anchor="" x="915.70" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:261) (2 samples, 0.50%)</title><rect x="1083.8" y="484" width="5.9" height="15.0" fill="rgb(222,208,44)" rx="2" ry="2" />
+<text text-anchor="" x="1086.80" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_power_on (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:166) (1 samples, 0.25%)</title><rect x="803.6" y="500" width="2.9" height="15.0" fill="rgb(245,194,11)" rx="2" ry="2" />
+<text text-anchor="" x="806.55" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1027.8" y="516" width="2.9" height="15.0" fill="rgb(248,69,54)" rx="2" ry="2" />
+<text text-anchor="" x="1030.75" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>vu_wa_check (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:93) (398 samples, 99.50%)</title><rect x="12.9" y="308" width="1174.2" height="15.0" fill="rgb(214,58,24)" rx="2" ry="2" />
+<text text-anchor="" x="15.95" y="318.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >vu_wa_check (E:\softeq\Tests\SATA\BB\Host_Psuite\write_amplification_sanity.py:93)</text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:101) (1 samples, 0.25%)</title><rect x="1083.8" y="516" width="3.0" height="15.0" fill="rgb(244,8,21)" rx="2" ry="2" />
+<text text-anchor="" x="1086.80" y="526.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_invalidate_params (E:\softeq\common_libs\functional.py:466) (1 samples, 0.25%)</title><rect x="1134.0" y="436" width="2.9" height="15.0" fill="rgb(214,39,29)" rx="2" ry="2" />
+<text text-anchor="" x="1136.95" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>wait_free_tags (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:406) (1 samples, 0.25%)</title><rect x="21.8" y="436" width="3.0" height="15.0" fill="rgb(240,128,37)" rx="2" ry="2" />
+<text text-anchor="" x="24.80" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:452) (2 samples, 0.50%)</title><rect x="1107.4" y="436" width="5.9" height="15.0" fill="rgb(250,147,43)" rx="2" ry="2" />
+<text text-anchor="" x="1110.40" y="446.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:198) (1 samples, 0.25%)</title><rect x="1030.7" y="500" width="3.0" height="15.0" fill="rgb(214,100,0)" rx="2" ry="2" />
+<text text-anchor="" x="1033.70" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:200) (1 samples, 0.25%)</title><rect x="1033.7" y="468" width="2.9" height="15.0" fill="rgb(253,1,26)" rx="2" ry="2" />
+<text text-anchor="" x="1036.65" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>__call__ (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Buffer.py:74) (1 samples, 0.25%)</title><rect x="1080.9" y="484" width="2.9" height="15.0" fill="rgb(217,155,51)" rx="2" ry="2" />
+<text text-anchor="" x="1083.85" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>get_check_response_status (E:\softeq\kite\usr\safe_env\environment\custom\zircon_full\Adapter.py:202) (2 samples, 0.50%)</title><rect x="1024.8" y="500" width="5.9" height="15.0" fill="rgb(243,103,46)" rx="2" ry="2" />
+<text text-anchor="" x="1027.80" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>format_command (E:\softeq\kite\plugins\native\_logging_helper.py:140) (1 samples, 0.25%)</title><rect x="1098.5" y="468" width="3.0" height="15.0" fill="rgb(246,181,14)" rx="2" ry="2" />
+<text text-anchor="" x="1101.55" y="478.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>check_for_response (E:\softeq\kite\var\gen_environment\classes\environment\Adapter.py:128) (3 samples, 0.75%)</title><rect x="1069.0" y="452" width="8.9" height="15.0" fill="rgb(211,87,18)" rx="2" ry="2" />
+<text text-anchor="" x="1072.05" y="462.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>add_buffer (E:\softeq\kite\libs\sata\response.py:392) (1 samples, 0.25%)</title><rect x="903.9" y="500" width="2.9" height="15.0" fill="rgb(229,118,1)" rx="2" ry="2" />
+<text text-anchor="" x="906.85" y="510.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>_Delay (E:\softeq\kite\usr\safe_env\environment\custom\mimiq3\Adapter.py:109) (1 samples, 0.25%)</title><rect x="892.1" y="484" width="2.9" height="15.0" fill="rgb(244,59,21)" rx="2" ry="2" />
+<text text-anchor="" x="895.05" y="494.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s(this)" onmouseout="c()" onclick="zoom(this)">
+<title>write_fpdma (E:\softeq\kite\usr\safe_env\environment\protocol\sata\Adapter.py:431) (1 samples, 0.25%)</title><rect x="1157.6" y="420" width="2.9" height="15.0" fill="rgb(252,186,8)" rx="2" ry="2" />
+<text text-anchor="" x="1160.55" y="430.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+</svg>
