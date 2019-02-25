@@ -1,0 +1,8 @@
+# script processes aggregation jobs, add it if you use a queue for aggregation jobs (parameter aggregator.use_jobs_in_aggregation=true)
+* * * * * /usr/local/bin/php /app/bin/cli.php cron:process-aggregating-jobs
+# script creates jobs to aggregate all profiles for previous day, add it if you use a queue for aggregation jobs (parameter aggregator.use_jobs_in_aggregation=true)
+0 2 * * * /usr/local/bin/php /app/bin/cli.php cron:create-aggregating-jobs
+# script aggregates all profiles for previous day, add it if you don't use a queue for aggregation jobs (parameter aggregator.use_jobs_in_aggregation=false)
+*/5 * * * * /usr/local/bin/php /app/bin/cli.php cron:aggregate-all-profiles
+# script removes old aggregated data, by default > 200 days
+0 1 * * * /usr/local/bin/php /app/bin/cli.php cron:remove-old-profiles

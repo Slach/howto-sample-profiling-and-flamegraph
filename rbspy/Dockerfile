@@ -18,5 +18,5 @@ RUN rake db:setup
 RUN rake db:migrate
 RUN rake db:seed
 RUN rake assets:precompile
-RUN wget -q -O- https://github.com/rbspy/rbspy/releases/download/v0.2.8/rbspy-v0.2.8-x86_64-unknown-linux-musl.tar.gz | tar -C /bin/ -zxv
+RUN wget -q -O- https://github.com/rbspy/rbspy/releases/download/v0.3.5/rbspy-v0.3.5-x86_64-unknown-linux-musl.tar.gz | tar -C /bin/ -zxv
 CMD rails server

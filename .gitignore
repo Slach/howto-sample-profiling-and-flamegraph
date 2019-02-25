@@ -1,5 +1,9 @@
-.vagrant
-.idea
+.vagrant/
+.idea/
 *.log
 *.sublime-project
 *.sublime-workspace
+*.gz
+*.tmp
+./bitrix/bitrix/
+./bitrix/*.php

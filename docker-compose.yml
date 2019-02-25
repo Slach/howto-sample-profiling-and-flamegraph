@@ -6,40 +6,153 @@ services:
       - "80:80"
     volumes:
       - ./php/nginx/conf.d/demo.wordpress.local.conf:/etc/nginx/conf.d/demo.wordpress.local.conf
+      - ./php/nginx/conf.d/demo.wordpress-liveprof.local.conf:/etc/nginx/conf.d/demo.wordpress-liveprof.local.conf
+      - ./php/nginx/conf.d/demo.liveprof-ui.local.conf:/etc/nginx/conf.d/demo.liveprof-ui.local.conf
+      - ./bitrix/nginx/conf.d/demo.bitrix.local.conf:/etc/nginx/conf.d/demo.bitrix.local.conf
+      - ./python/nginx/conf.d/demo.python3.local.conf:/etc/nginx/conf.d/demo.python3.local.conf
+      - ./nodejs/nginx/conf.d/demo.nodejs.local.conf:/etc/nginx/conf.d/demo.nodejs.local.conf
       - ./rbspy/nginx/conf.d/demo.publify.local.conf:/etc/nginx/conf.d/demo.publify.local.conf
       - ./java/nginx/conf.d/demo.hlebushek.local.conf:/etc/nginx/conf.d/demo.hlebushek.local.conf
       - ./java/nginx/conf.d/demo.flamescope.local.conf:/etc/nginx/conf.d/demo.flamescope.local.conf
-    depends_on:
-      - wordpress
-      - rbspy
-      - java
-      - flamescope
+      - ./bitrix/:/var/www/bitrix/
     links:
-      - rbspy
       - wordpress
+      - wordpress-liveprof
+      - liveprof-ui
+      - bitrix
+      - rbspy
+      - python
       - java
       - flamescope
-
-  mysql:
-    image: mysql:latest
-    environment:
-      - MYSQL_DATABASE=wordpress
-      - MYSQL_ROOT_PASSWORD=root
+      - nodejs
 
   wordpress:
+    image: bloodjazman/wordpress
     build:
       context: ./
-      dockerfile: ./php/Dockerfile
+      dockerfile: ./php/wordpress/Dockerfile
     environment:
-      - VIRTUAL_HOST=demo.wordpress.local
-    depends_on:
-      - mysql
+      VIRTUAL_HOST: demo.wordpress.local
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
     links:
       - mysql
     volumes:
       - ./php/fpm/conf.d/xhprof_sampling.php:/usr/local/etc/php/conf.d/xhprof_sampling.php
       - ./php/fpm/conf.d/xhprof_sampling.ini:/usr/local/etc/php/conf.d/xhprof_sampling.ini
       - /tmp/:/tmp/
+    cap_add:
+      - SYS_PTRACE
+
+  wordpress-install:
+    image: bloodjazman/wordpress
+    build:
+      context: ./
+      dockerfile: ./php/wordpress/Dockerfile
+    environment:
+      VIRTUAL_HOST: demo.wordpress.local
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - ./php/wordpress/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh
+    links:
+      - mysql
+      - wordpress
+
+    command: dockerize -timeout 60s -wait tcp://mysql:3306 -wait tcp://wordpress:9000 bash -c "wp core install --url=http://demo.wordpress.local/ --title=flamegraph --admin_user=wordpress --admin_password=wordpress --admin_email=admin@wordpress.org --skip-email && echo 'php-fpm'"
+
+  wordpress-liveprof:
+    image: bloodjazman/wordpress
+    build:
+      context: ./
+      dockerfile: ./php/wordpress/Dockerfile
+    environment:
+      VIRTUAL_HOST: demo.wordpress-liveprof.local
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+    links:
+      - mysql
+    volumes:
+      - ./php/fpm/conf.d/liveprof_sampling.php:/usr/local/etc/php/conf.d/liveprof_sampling.php
+      - ./php/fpm/conf.d/liveprof_sampling.ini:/usr/local/etc/php/conf.d/liveprof_sampling.ini
+      - /tmp/:/tmp/
+    cap_add:
+      - SYS_PTRACE
+
+  bitrix:
+    build:
+      context: ./
+      dockerfile: ./bitrix/Dockerfile
+    links:
+      - mysql
+      - memcached
+    volumes:
+      - ./php/fpm/conf.d/liveprof_sampling.php:/usr/local/etc/php/conf.d/liveprof_sampling.php
+      - ./php/fpm/conf.d/liveprof_sampling.ini:/usr/local/etc/php/conf.d/liveprof_sampling.ini
+      - /tmp/:/tmp/
+      # - ./bitrix/:/var/www/bitrix/
+    cap_add:
+      - SYS_PTRACE
+
+  liveprof-ui:
+    image: bloodjazman/liveprof-ui
+    build:
+      context: ./
+      dockerfile: ./php/liveprof-ui/Dockerfile
+    volumes:
+      - ./php/liveprof-ui/services.yaml:/app/src/config/services.yaml
+      - ./php/liveprof-ui/php-errors.ini:/usr/local/etc/php/conf.d/php-errors.ini
+    links:
+      - mysql
+
+  liveprof-cron:
+    image: bloodjazman/liveprof-ui
+    build:
+      context: ./
+      dockerfile: ./php/liveprof-ui/Dockerfile
+    volumes:
+      - ./php/liveprof-ui/services.yaml:/app/src/config/services.yaml
+      - ./php/liveprof-ui/crontab:/etc/cron.d/liveprof-ui-cron
+    command: /bin/dockerize -timeout 60s -wait tcp://liveprof-ui:8000 -wait tcp://mysql:3306 /usr/local/bin/supercronic /etc/cron.d/liveprof-ui-cron
+    links:
+      - mysql
+      - liveprof-ui
+
+  python:
+    build:
+      context: ./
+      dockerfile: ./python/Dockerfile
+    links:
+      - mysql
+    cap_add:
+      - SYS_PTRACE
+
+  javascript:
+    build:
+      context: ./
+      dockerfile: ./javascript/Dockerfile
+    volumes:
+      - ./javascript/bitrix-setup-cpu-profile.js:/opt/automated-chrome-profiling/bitrix-setup-cpu-profile.js
+      - ./javascript/tests.js:/opt/automated-chrome-profiling/tests.js
+      - ./javascript/snapshots:/opt/automated-chrome-profiling/snapshots
+    links:
+      - nginx
+      - bitrix
+
+  nodejs:
+    build:
+      context: ./
+      dockerfile: ./nodejs/Dockerfile
+    links:
+      - mysql
+    cap_add:
+      - SYS_PTRACE
 
   juno_kv_server:
     image: bloodjazman/juno_kv_server
@@ -50,8 +163,6 @@ services:
 
   go-torch:
     image: uber/go-torch
-    depends_on:
-      - juno_kv_server
     links:
       - juno_kv_server
     volumes:
@@ -82,3 +193,13 @@ services:
     volumes:
       - /tmp/:/tmp/
     privileged: true
+
+  memcached:
+    image: memcached:latest
+
+  mysql:
+    image: mysql:latest
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+    volumes:
+      - ./mysql/init:/docker-entrypoint-initdb.d
