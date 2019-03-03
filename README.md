@@ -16,7 +16,11 @@ pip install -U docker-compose requests
 
 # install additional external dependencies
 git clone https://github.com/Netflix/flamescope.git /opt/flamescope/
-git clone https://github.com/badoo/liveprof-ui.git /opt/liveprof-ui/
+
+# set HOST kernel to available work perf inside container
+echo -1 > /proc/sys/kernel/perf_event_paranoid
+echo 0 > /proc/sys/kernel/kptr_restrict
+
 ```
 
 ## PHP - wordpress - XHProf
@@ -49,10 +53,9 @@ ab -n 1000 -c 50 http://demo.wordpress.local/index.php 2>&1 > /tmp/ab_results_ph
 
 # collect sampling data for phpspy and build flamegraph via pipe
 # TODO wait when https://github.com/adsr/phpspy/issues/56 will fix for improve accurancy
-# TODO wait when fixed infinite loop https://github.com/adsr/phpspy/issues/42#issuecomment-467153833
-docker-compose exec wordpress sh -c "/opt/phpspy/phpspy -P php-fpm -T 32 -V73 -l 1000 | /opt/phpspy/stackcollapse-phpspy.pl | /opt/phpspy/vendor/flamegraph.pl > /tmp/phpspy-flamegraph.svg"
+docker-compose exec wordpress sh -c "pgrep php-fpm | xargs -P0 -I{} bash -c '/opt/phpspy/phpspy -p {} -V73 --time-limit-ms 60000 | /opt/phpspy/stackcollapse-phpspy.pl | /opt/phpspy/vendor/flamegraph.pl > /tmp/phpspy-flamegraph.{}.svg'"
 
-ls -la /tmp/*.svg
+ls -la /tmp/phpspy*.svg
 ```
 
 ## PHP - wordpress - liveprof
@@ -69,9 +72,39 @@ ab -n 1000 -c 50 http://demo.wordpress-liveprof.local/index.php 2>&1 > /tmp/ab_r
 
 # open http://demo.liveprof-ui.local/ in your browser
 ```
-## PYTHON
+
+## PYTHON - pyflame
 ```bash
-apt
+docker-compose up -d nginx python
+
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.python3.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.python3.local >> /etc/hosts
+
+# run ab in background, for imitate workload
+ab -n 20000 -c 50 http://demo.python3.local/ 2>&1 > /tmp/ab_results_php_pyflame.log & 
+# run sampling
+docker-compose exec python bash -c "pgrep gunicorn | xargs -P 0 -I{} bash -c 'pyflame -s 60 -p {} | /opt/FlameGraph/flamegraph.pl > /tmp/pyflame-flamegraph.{}.svg'"
+
+ls -la /tmp/flamegraph-pyflame*.svg
+```
+
+## PYTHON - py-spy
+```bash
+docker-compose up -d nginx python
+
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.python3.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.python3.local >> /etc/hosts
+
+# run ab in background, for imitate workload
+ab -n 20000 -c 50 http://demo.python3.local/ 2>&1 > /tmp/ab_results_php_pyflame.log & 
+# run sampling
+docker-compose exec python bash -c "pgrep gunicorn | xargs -P 0 -I{} bash -c 'py-spy -d 60 -p {} --nonblocking --flame /tmp/pyspy-flamegraph.{}.svg'"
+
+ls -la /tmp/flamegraph-pyflame*.svg
 ```
 
 ## GOLANG
@@ -90,15 +123,16 @@ ls -la /tmp/*.svg
 ## RUBY
 
 ```bash
-docker-compose up -d 
+docker-compose up -d nginx 
 
 NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
 NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
-
+sed -i "/demo.publify.local/d" /etc/hosts
 echo $NGINX_CONTAINER_ADDR demo.publify.local >> /etc/hosts
 # run ab in background, for imitate workload
 ab -n 100000 -c 50 http://demo.publify.local/setup &> /tmp/ab_results_rbspy.log &
 
+# catch stracktraces via rbspy
 RBSPY_CONTAINER_ID=`docker ps -a | grep rbspy | cut -d " " -f 1`
 RBSPY_PID=$(docker-compose exec rbspy sh -c "ss -nltp | grep ':3000' | sort | head -n 1 | cut -d '=' -f 2 | cut -d "," -f 1 | tr -d '\n' | tr -d '\r'")
 docker-compose exec rbspy sh -c "rbspy record --pid=${RBSPY_PID} --raw-file=/tmp/rbspy-raw.gz --duration=60 --format=flamegraph --file=/tmp/rbspy-flamegraph"
@@ -107,40 +141,92 @@ docker-compose exec rbspy sh -c "rbspy record --pid=${RBSPY_PID} --raw-file=/tmp
 ls -la /tmp/*.svg
 
 ```
-## .Net Core (TODO)
-- https://github.com/blogifierdotnet/Blogifier
-- http://blogs.microsoft.co.il/sasha/2017/02/27/profiling-a-net-core-application-on-linux/
-- http://dotsandbrackets.com/net-core-memory-linux-ru/
 
-## NodeJS (TODO)
-- https://github.com/hzhu/node-perf
-- https://github.com/uber-node/node-flame
+## .Net Core 
+```bash
+docker-compose up -d nginx 
+
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.blogifier.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.blogifier.local >> /etc/hosts
+# run ab in background, for imitate workload
+ab -n 10000 -c 50 http://demo.blogifier.local/ &> /tmp/ab_results_netcore.log &
+
+# catch stack traces via perf
+
+docker-compose exec netcore sh -c 'perf_4.9 record -F 99 -g -p `pgrep dotnet` -- sleep 60'
+# output flamegraph
+docker-compose exec netcore sh -c "perf_4.9 script | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl > /tmp/netcore-flamegraph.svg"
+```
+
+## NodeJS 
+```bash
+docker-compose up -d nginx 
+
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.nodejs.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.nodejs.local >> /etc/hosts
+# run ab in background, for imitate workload
+ab -n 10000 -c 50 http://demo.nodejs.local/ &> /tmp/ab_results_netcore.log &
+
+# collect flamegraph via node-stap
+docker-compose exec nodejs sh -c 'nodejs /opt/node-stap/torch.js `pgrep node` flame 60 > /tmp/node-stap.html'
+# collect flamegraph via node-flame not worked yet ;(
+docker-compose exec nodejs sh -c 'node-flame `pgrep node` flame 60 > /tmp/node-flame.html'
+
+# collect flamegraph via perf
+perf record -F99 -g -p `pgrep node` -- sleep 60
+docker-compose exec nodejs sh -c 'perf record -F99 -g -p `pgrep node` -- sleep 60'
+
+perf script | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl --colors js > /tmp/nodejs-flamegraph.svg
+docker-compose exec nodejs sh -c 'perf script | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl --colors js > /tmp/nodejs-flamegraph.svg'
+```
+
+## Java - Async Profiler
+```bash
+docker-compose up -d nginx java
+NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
+NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.hlebushek.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.hlebushek.local >> /etc/hosts
+
+# run ab in background, for imitate workload
+ab -n 20000 -c 50 http://demo.hlebushek.local/ &> /tmp/ab_results_java.log &
+
+docker-compose exec java sh -c "pgrep java | xargs -P0 -I{} /opt/async-profiler/profiler.sh collect -e itimer -i 10000000 -d 60 -f /tmp/java_flamegraph_async.{}.svg {}"
+```
+
 
 ## Browser (Chromium) Javascript + PHPSpy
 - https://github.com/jamesseanwright/automated-chrome-profiling
 
-## Java (TODO)
 
-https://github.com/jvm-profiling-tools/async-profiler
-
-## Java Perf + FLAMESCOPE
+## Java - Perf + FLAMESCOPE
 
 ```bash
-docker-compose up -d
+docker-compose up -d nginx java flamescope
 
 NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
 NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
+sed -i "/demo.hlebushek.local/d" /etc/hosts
 echo $NGINX_CONTAINER_ADDR demo.hlebushek.local >> /etc/hosts
+sed -i "/demo.flamescope.local/d" /etc/hosts
 echo $NGINX_CONTAINER_ADDR demo.flamescope.local >> /etc/hosts
 
 # run ab in background, for imitate workload
 ab -n 200000 -c 50 http://demo.hlebushek.local/ &> /tmp/ab_results_java.log &
 
 DT=$(date +'%Y-%m-%d_%H%M')
-JAVA_PID=`docker-compose exec java ps -ef | grep java | tr -s ' ' | cut -d ' ' -f 2`
-docker-compose exec java bash -c "rm -rfv /tmp/perf-$JAVA_PID.map && PERF_RECORD_SECONDS=15 /opt/perf-map-agent/bin/perf-java-record-stack $JAVA_PID -a && ls -la /tmp/" 
+JAVA_PID=`docker-compose exec java pgrep java`
+docker-compose exec java bash -c "rm -rfv /tmp/perf-$JAVA_PID.map && PERF_RECORD_SECONDS=60 /opt/perf-map-agent/bin/perf-java-record-stack $JAVA_PID -a && ls -la /tmp/" 
 docker-compose exec java bash -c "perf script --header -i /tmp/perf-$JAVA_PID.data > /tmp/stacks.myproductionapp.$DT"
 
 # open http://demo.flamescope.local in browser
 
 ```
+
+## SQL - PostgreSQL (TODO)
+- https://www.openscg.com/bigsql/docs/plprofiler/
+- https://www.percona.com/blog/2019/02/13/plprofiler-getting-a-handy-tool-for-profiling-your-pl-pgsql-code/

@@ -12,6 +12,7 @@ services:
       - ./python/nginx/conf.d/demo.python3.local.conf:/etc/nginx/conf.d/demo.python3.local.conf
       - ./nodejs/nginx/conf.d/demo.nodejs.local.conf:/etc/nginx/conf.d/demo.nodejs.local.conf
       - ./rbspy/nginx/conf.d/demo.publify.local.conf:/etc/nginx/conf.d/demo.publify.local.conf
+      - ./netcore/nginx/conf.d/demo.blogifier.local.conf:/etc/nginx/conf.d/demo.blogifier.local.conf
       - ./java/nginx/conf.d/demo.hlebushek.local.conf:/etc/nginx/conf.d/demo.hlebushek.local.conf
       - ./java/nginx/conf.d/demo.flamescope.local.conf:/etc/nginx/conf.d/demo.flamescope.local.conf
       - ./bitrix/:/var/www/bitrix/
@@ -25,6 +26,7 @@ services:
       - java
       - flamescope
       - nodejs
+      - netcore
 
   wordpress:
     image: bloodjazman/wordpress
@@ -130,8 +132,19 @@ services:
       dockerfile: ./python/Dockerfile
     links:
       - mysql
+    volumes:
+      - /tmp/:/tmp/
     cap_add:
       - SYS_PTRACE
+
+  netcore:
+    build:
+      context: ./
+      dockerfile: ./netcore/Dockerfile
+    volumes:
+      - /tmp/:/tmp/
+    cap_add:
+      - SYS_ADMIN
 
   javascript:
     build:
@@ -151,8 +164,11 @@ services:
       dockerfile: ./nodejs/Dockerfile
     links:
       - mysql
+    volumes:
+      - /tmp/:/tmp/
     cap_add:
       - SYS_PTRACE
+      - SYS_ADMIN
 
   juno_kv_server:
     image: bloodjazman/juno_kv_server
@@ -192,7 +208,8 @@ services:
     command: sh -c "cd /opt/hlebushek && MAVEN_OPTS='-XX:+PreserveFramePointer -Xmx512m -Xms10m' mvn jetty:run"
     volumes:
       - /tmp/:/tmp/
-    privileged: true
+    cap_add:
+      - SYS_PTRACE
 
   memcached:
     image: memcached:latest

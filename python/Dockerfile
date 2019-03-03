@@ -1,5 +1,5 @@
 ﻿FROM ubuntu:18.04
-RUN apt-get update && apt-get install -y software-properties-common python3-pip git
+RUN apt-get update && apt-get install -y software-properties-common python3-pip git procps
 
 RUN apt-add-repository -y ppa:trevorjay/pyflame && apt-get update && apt-get install -y pyflame
 RUN git clone https://github.com/brendangregg/FlameGraph.git /opt/FlameGraph
