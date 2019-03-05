@@ -64,7 +64,6 @@ services:
     links:
       - mysql
       - wordpress
-
     command: dockerize -timeout 60s -wait tcp://mysql:3306 -wait tcp://wordpress:9000 bash -c "wp core install --url=http://demo.wordpress.local/ --title=flamegraph --admin_user=wordpress --admin_password=wordpress --admin_email=admin@wordpress.org --skip-email && echo 'php-fpm'"
 
   wordpress-liveprof:

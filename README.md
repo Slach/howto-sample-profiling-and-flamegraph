@@ -41,6 +41,7 @@ ls -la /tmp/*.svg
 
 ## PHP - wordpress - phpspy
 ```bash
+docker-compose up -d wordpress
 docker-compose run wordpress-install 
 docker-compose up -d nginx
 NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
@@ -52,7 +53,7 @@ echo $NGINX_CONTAINER_ADDR demo.wordpress.local >> /etc/hosts
 ab -n 1000 -c 50 http://demo.wordpress.local/index.php 2>&1 > /tmp/ab_results_php_phpspy.log &
 
 # collect sampling data for phpspy and build flamegraph via pipe
-# TODO wait when https://github.com/adsr/phpspy/issues/56 will fix for improve accurancy
+# https://github.com/adsr/phpspy/issues/56 fixed for improve accurancy ;)
 docker-compose exec wordpress sh -c "pgrep php-fpm | xargs -P0 -I{} bash -c '/opt/phpspy/phpspy -p {} -V73 --time-limit-ms 60000 | /opt/phpspy/stackcollapse-phpspy.pl | /opt/phpspy/vendor/flamegraph.pl > /tmp/phpspy-flamegraph.{}.svg'"
 
 ls -la /tmp/phpspy*.svg
@@ -60,6 +61,7 @@ ls -la /tmp/phpspy*.svg
 
 ## PHP - wordpress - liveprof
 ```bash
+docker-compose up -d mysql wordpress 
 docker-compose run wordpress-install 
 docker-compose up -d mysql nginx liveprof-cron
 NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`

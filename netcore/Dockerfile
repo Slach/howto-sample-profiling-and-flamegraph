@@ -7,9 +7,11 @@ WORKDIR /app
 
 # Copy csproj and restore as distinct layers
 # TODO wait for add RuntimeIdentifiers
-# RUN git clone https://github.com/blogifierdotnet/Blogifier .
+# https://github.com/blogifierdotnet/Blogifier/pull/137
 RUN git clone https://github.com/Slach/Blogifier .
+#RUN git clone https://github.com/blogifierdotnet/Blogifier .
 RUN dotnet build -r linux-x64 Blogifier.sln
+#RUN dotnet build /p:UseAppHost=true /p:RuntimeIdentifier=linux-x64 Blogifier.sln
 
 # Copy everything else and build
 RUN mkdir /app/out
