@@ -1,4 +1,6 @@
 ﻿FROM ubuntu:18.04
+ENV DEBIANFRONTEND=noninteractive
+RUN rgrep -l archive.ubuntu.com /etc/apt/ | xargs -P0 -I{} sed -i -e 's/archive.ubuntu.com/ru.archive.ubuntu.com/' {}
 RUN apt-get update && apt-get install -y software-properties-common python3-pip git procps
 
 RUN apt-add-repository -y ppa:trevorjay/pyflame && apt-get update && apt-get install -y pyflame

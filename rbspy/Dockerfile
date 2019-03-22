@@ -1,5 +1,6 @@
 FROM ubuntu:18.04
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIANFRONTEND=noninteractive
+RUN rgrep -l archive.ubuntu.com /etc/apt/ | xargs -P0 -I{} sed -i -e 's/archive.ubuntu.com/ru.archive.ubuntu.com/' {}
 RUN apt-get update
 RUN apt-get install -y locales tzdata iproute2
 ENV LANG=en_US.UTF-8

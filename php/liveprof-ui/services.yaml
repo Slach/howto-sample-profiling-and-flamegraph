@@ -1,6 +1,6 @@
 parameters:
   aggregator.default_app: Default # app name to use the aggregator in few apps
-  aggregator.use_jobs_in_aggregation: true # use db queue for aggregation
+  aggregator.use_jobs_in_aggregation: false # use db queue for aggregation
   # aggregator.fields: [wt,ct,cpu,mu: mem] # field map to aggregate, KEY - in profiler, VALUE - in aggregator
   aggregator.fields: [wt,ct] # field map to aggregate, KEY - in profiler, VALUE - in aggregator
   aggregator.calls_count_field: ct # the field responses for calls count in this context

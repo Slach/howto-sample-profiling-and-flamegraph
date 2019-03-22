@@ -1,7 +1,7 @@
 FROM php:7.3
 MAINTAINER Eugene Klimov <bloodjazman@gmail.com>
 
-RUN apt-get update && apt-get -y install git-core unzip \
+RUN apt-get update && apt-get -y install git-core unzip mysql-client \
 && pecl install xdebug-beta \
 && echo "zend_extension=$(find /usr/local/lib/php/extensions/ -name xdebug.so)" > /usr/local/etc/php/conf.d/xdebug.ini
 RUN curl -sL --show-error https://getcomposer.org/installer | php && mv composer.phar /usr/local/bin/composer
@@ -22,8 +22,10 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 
 WORKDIR /app
 ENV COMPOSER_ALLOW_SUPERUSER=1
-RUN git clone https://github.com/badoo/liveprof-ui.git /app/
+ENV LIVEPROF_MYSQL_PORT=3306
+# TODO wait when merge https://github.com/badoo/liveprof-ui/pull/6
+RUN git clone https://github.com/Slach/liveprof-ui.git /app/
 RUN composer install
 COPY ./php/liveprof-ui/crontab /etc/cron.d/liveprof-ui-cron
 RUN chmod 0600 /etc/cron.d/liveprof-ui-cron
-CMD /bin/dockerize -timeout 60s -wait tcp://mysql:3306 php bin/cli.php aggregator:install && php -S 0.0.0.0:8000 -t src/www/ src/www/router.php
+CMD /bin/dockerize -timeout 60s -wait tcp://mysql:3306 php bin/cli.php aggregator:install && mysql --user=${LIVEPROF_MYSQL_USER} --password=${LIVEPROF_MYSQL_PASS} -h ${LIVEPROF_MYSQL_HOST} -P ${LIVEPROF_MYSQL_PORT} -e "ALTER TABLE aggregator_metods CHANGE name name VARCHAR(1024)" ${LIVEPROF_MYSQL_DB} && php -S 0.0.0.0:8000 -t src/www/ src/www/router.php

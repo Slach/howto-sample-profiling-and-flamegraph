@@ -1,6 +1,7 @@
 ﻿#!/usr/bin/env bash
 set -xeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
+rgrep -l archive.ubuntu.com /etc/apt/ | xargs -P0 -I{} sed -i -e 's/archive.ubuntu.com/ru.archive.ubuntu.com/' {}
 sysctl net.ipv6.conf.all.forwarding=1
 apt-get update
 apt-get install -y apt-transport-https software-properties-common apache2-utils git

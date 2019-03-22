@@ -1,5 +1,6 @@
 ﻿FROM ubuntu:18.04
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIANFRONTEND=noninteractive
+RUN rgrep -l archive.ubuntu.com /etc/apt/ | xargs -P0 -I{} sed -i -e 's/archive.ubuntu.com/ru.archive.ubuntu.com/' {}
 RUN apt-get update && apt-get install -y curl wget gnupg2 git
 RUN curl -sL https://deb.nodesource.com/setup_11.x | bash -
 RUN apt install -y nodejs=11.*

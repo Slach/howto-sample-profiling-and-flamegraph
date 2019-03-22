@@ -21,9 +21,9 @@ RUN curl -sL http://www.1c-bitrix.ru/download/files/start_encode.tar.gz | tar -x
 ENV LIVE_PROFILER_CONNECTION_URL="mysql://liveprof:liveprof@mysql:3306/liveprof?charset=utf8"
 ENV COMPOSER_ALLOW_SUPERUSER=1
 RUN curl -sL --show-error https://getcomposer.org/installer | php && mv composer.phar /usr/local/bin/composer
-RUN mkdir -p /opt/liveprof && cd /opt/liveprof && composer require --verbose -o badoo/liveprof
+RUN git clone https://github.com/badoo/liveprof.git /opt/liveprof && cd /opt/liveprof && composer install --verbose
 
 RUN curl -sL https://github.com/jwilder/dockerize/releases/download/v0.6.1/dockerize-linux-amd64-v0.6.1.tar.gz | tar -xz -C /bin/
 RUN docker-php-ext-install pdo_mysql
 
-CMD /bin/dockerize -timeout 60s -wait tcp://mysql:3306 php /opt/liveprof/vendor/badoo/liveprof/bin/install.php && /usr/local/bin/docker-php-entrypoint php-fpm
+CMD /bin/dockerize -timeout 60s -wait tcp://mysql:3306 php /opt/liveprof/bin/install.php && /usr/local/bin/docker-php-entrypoint php-fpm

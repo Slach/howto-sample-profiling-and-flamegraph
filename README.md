@@ -61,9 +61,11 @@ ls -la /tmp/phpspy*.svg
 
 ## PHP - wordpress - liveprof
 ```bash
-docker-compose up -d mysql wordpress 
+docker-compose up -d mysql 
 docker-compose run wordpress-install 
-docker-compose up -d mysql nginx liveprof-cron
+docker-compose up -d wordpress-liveprof liveprof-ui liveprof-cron 
+docker-compose up -d nginx 
+
 NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
 NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
 sed -i "/demo.wordpress-liveprof.local/d" /etc/hosts
@@ -72,7 +74,7 @@ echo $NGINX_CONTAINER_ADDR demo.wordpress-liveprof.local >> /etc/hosts
 # run ab in background, for imitate workload
 ab -n 1000 -c 50 http://demo.wordpress-liveprof.local/index.php 2>&1 > /tmp/ab_results_php_liveprof.log &
 
-# open http://demo.liveprof-ui.local/ in your browser
+# open http://demo.liveprof-ui.local/ in your browser, select host and label and click "Aggregate today snapshot"
 ```
 
 ## PYTHON - pyflame
