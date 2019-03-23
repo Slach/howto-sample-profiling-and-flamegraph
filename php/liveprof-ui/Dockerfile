@@ -23,8 +23,8 @@ RUN curl -fsSLO "$SUPERCRONIC_URL" \
 WORKDIR /app
 ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV LIVEPROF_MYSQL_PORT=3306
-# TODO wait when merge https://github.com/badoo/liveprof-ui/pull/6
-RUN git clone https://github.com/Slach/liveprof-ui.git /app/
+# https://github.com/badoo/liveprof-ui/pull/6 merged
+RUN git clone https://github.com/badoo/liveprof-ui.git /app/
 RUN composer install
 COPY ./php/liveprof-ui/crontab /etc/cron.d/liveprof-ui-cron
 RUN chmod 0600 /etc/cron.d/liveprof-ui-cron
