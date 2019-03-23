@@ -202,11 +202,6 @@ ab -n 20000 -c 50 http://demo.hlebushek.local/ &> /tmp/ab_results_java.log &
 docker-compose exec java sh -c "pgrep java | xargs -P0 -I{} /opt/async-profiler/profiler.sh collect -e itimer -i 10000000 -d 60 -f /tmp/java_flamegraph_async.{}.svg {}"
 ```
 
-
-## Browser (Chromium) Javascript + PHPSpy
-- https://github.com/jamesseanwright/automated-chrome-profiling
-
-
 ## Java - Perf + FLAMESCOPE
 
 ```bash
@@ -234,3 +229,6 @@ docker-compose exec java bash -c "perf script --header -i /tmp/perf-$JAVA_PID.da
 ## SQL - PostgreSQL (TODO)
 - https://www.openscg.com/bigsql/docs/plprofiler/
 - https://www.percona.com/blog/2019/02/13/plprofiler-getting-a-handy-tool-for-profiling-your-pl-pgsql-code/
+
+## Browser (Chromium) Javascript (TODO)
+- https://github.com/jamesseanwright/automated-chrome-profiling
