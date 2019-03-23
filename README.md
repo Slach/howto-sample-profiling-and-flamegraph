@@ -70,6 +70,8 @@ NGINX_CONTAINER_ID=`docker ps | grep nginx | cut -d " " -f 1`
 NGINX_CONTAINER_ADDR=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $NGINX_CONTAINER_ID`
 sed -i "/demo.wordpress-liveprof.local/d" /etc/hosts
 echo $NGINX_CONTAINER_ADDR demo.wordpress-liveprof.local >> /etc/hosts
+sed -i "/demo.liveprof-ui.local/d" /etc/hosts
+echo $NGINX_CONTAINER_ADDR demo.liveprof-ui.local >> /etc/hosts
 
 # run ab in background, for imitate workload
 ab -n 1000 -c 50 http://demo.wordpress-liveprof.local/index.php 2>&1 > /tmp/ab_results_php_liveprof.log &
